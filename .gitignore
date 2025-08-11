@@ -1,5 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+prepwise-ff63e-firebase-adminsdk-fbsvc-6eb6b89453.json
+
 # dependencies
 /node_modules
 /.pnp
