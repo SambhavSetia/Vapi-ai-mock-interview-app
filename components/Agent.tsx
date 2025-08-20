@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
@@ -35,34 +35,35 @@ const Agent = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [lastMessage, setLastMessage] = useState<string>("");
 
-  useEffect(() => {
-    const onCallStart = () => {
-      setCallStatus(CallStatus.ACTIVE);
-    };
+  // Prevent multiple feedback submissions
+  const feedbackGeneratedRef = useRef(false);
 
-    const onCallEnd = () => {
-      setCallStatus(CallStatus.FINISHED);
-    };
+  useEffect(() => {
+    const onCallStart = () => setCallStatus(CallStatus.ACTIVE);
+
+    const onCallEnd = () => setCallStatus(CallStatus.FINISHED);
 
     const onMessage = (message: Message) => {
       if (message.type === "transcript" && message.transcriptType === "final") {
-        const newMessage = { role: message.role, content: message.transcript };
+        // Map unknown roles safely
+        const validRole: SavedMessage["role"] =
+          message.role === "user" ||
+          message.role === "system" ||
+          message.role === "assistant"
+            ? message.role
+            : "assistant";
+
+        const newMessage = { role: validRole, content: message.transcript };
         setMessages((prev) => [...prev, newMessage]);
       }
     };
 
-    const onSpeechStart = () => {
-      console.log("speech start");
-      setIsSpeaking(true);
-    };
+    const onSpeechStart = () => setIsSpeaking(true);
 
-    const onSpeechEnd = () => {
-      console.log("speech end");
-      setIsSpeaking(false);
-    };
+    const onSpeechEnd = () => setIsSpeaking(false);
 
     const onError = (error: Error) => {
-      console.log("Error:", error);
+      console.error("VAPI Error:", error);
     };
 
     vapi.on("call-start", onCallStart);
@@ -88,19 +89,25 @@ const Agent = ({
     }
 
     const handleGenerateFeedback = async (messages: SavedMessage[]) => {
-      console.log("handleGenerateFeedback");
+      if (feedbackGeneratedRef.current) return; // ensure only once
+      feedbackGeneratedRef.current = true;
 
-      const { success, feedbackId: id } = await createFeedback({
-        interviewId: interviewId!,
-        userId: userId!,
-        transcript: messages,
-        feedbackId,
-      });
+      try {
+        const { success, feedbackId: id } = await createFeedback({
+          interviewId: interviewId!,
+          userId: userId!,
+          transcript: messages,
+          feedbackId,
+        });
 
-      if (success && id) {
-        router.push(`/interview/${interviewId}/feedback`);
-      } else {
-        console.log("Error saving feedback");
+        if (success && id) {
+          router.push(`/interview/${interviewId}/feedback`);
+        } else {
+          console.error("Error saving feedback");
+          router.push("/");
+        }
+      } catch (err) {
+        console.error("Feedback generation failed:", err);
         router.push("/");
       }
     };
@@ -114,77 +121,59 @@ const Agent = ({
     }
   }, [messages, callStatus, feedbackId, interviewId, router, type, userId]);
 
-  // const handleCall = async () => {
-  //   setCallStatus(CallStatus.CONNECTING);
-
-  //   if (type === "generate") {
-  //     await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
-  //       variableValues: {
-  //         username: userName,
-  //         userid: userId,
-  //       },
-  //       clientMessages: [],
-  //       serverMessages: []
-  //     });
-  //   } else {
-  //     let formattedQuestions = "";
-  //     if (questions) {
-  //       formattedQuestions = questions
-  //         .map((question) => `- ${question}`)
-  //         .join("\n");
-  //     }
-
-  //     await vapi.start(interviewer, {
-  //       variableValues: {
-  //         questions: formattedQuestions,
-  //       },
-  //       clientMessages: [],
-  //       serverMessages: []
-  //     });
-  //   }
-  // };
-
-
+  // Handle call start depending on type
   const handleCall = async () => {
-  try {
-    if (type === "assistant") {
-      // Assistant case
-      await vapi.start(
-        process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID!, // assistantId
-        {
-          variableValues: {
-            username: userName,
-            userid: userId,
+    try {
+      setCallStatus(CallStatus.CONNECTING);
+
+      if (type === "assistant") {
+        // Assistant case
+        await vapi.start(
+          process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID!, // assistantId
+          {
+            variableValues: {
+              username: userName,
+              userid: userId,
+            },
+            clientMessages: [],
+            serverMessages: [],
+          }
+        );
+      } else if (type === "generate") {
+        // Workflow case
+        await vapi.start(
+          undefined, // no assistant
+          {
+            variableValues: {
+              username: userName,
+              userid: userId,
+            },
+            clientMessages: [],
+            serverMessages: [],
           },
-          clientMessages: [],
-          serverMessages: []
+          undefined, // no squad
+          process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID! // workflowId
+        );
+      } else {
+        // Interviewer mode with custom questions
+        let formattedQuestions = "";
+        if (questions) {
+          formattedQuestions = questions.map((q) => `- ${q}`).join("\n");
         }
-      );
-    } 
-    else if (type === "generate") {
-      // Workflow case
-      await vapi.start(
-        undefined, // no assistant
-        {
+
+        await vapi.start(interviewer, {
           variableValues: {
-            username: userName,
-            userid: userId,
+            questions: formattedQuestions,
           },
           clientMessages: [],
-          serverMessages: []
-        },
-        undefined, // no squad
-        process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID! // workflowId
-      );
+          serverMessages: [],
+        });
+      }
+    } catch (error) {
+      console.error("Error starting call:", error);
+      setCallStatus(CallStatus.INACTIVE);
     }
-  } catch (error) {
-    console.error("Error starting call:", error);
-  }
-};
-
-  
-
- 
+  };
 
   const handleDisconnect = () => {
     setCallStatus(CallStatus.FINISHED);
@@ -224,40 +213,36 @@ const Agent = ({
         </div>
       </div>
 
+      {/* Transcript */}
       {messages.length > 0 && (
         <div className="transcript-border">
           <div className="transcript">
-            <p
-              key={lastMessage}
-              className={cn(
-                "transition-opacity duration-500 opacity-0",
-                "animate-fadeIn opacity-100"
-              )}
-            >
+            <p className="transition-opacity duration-500 animate-fadeIn">
               {lastMessage}
             </p>
           </div>
         </div>
       )}
 
+      {/* Controls */}
       <div className="w-full flex justify-center">
-        {callStatus !== "ACTIVE" ? (
-          <button className="relative btn-call" onClick={() => handleCall()}>
+        {callStatus !== CallStatus.ACTIVE ? (
+          <button className="relative btn-call" onClick={handleCall}>
             <span
               className={cn(
                 "absolute animate-ping rounded-full opacity-75",
-                callStatus !== "CONNECTING" && "hidden"
+                callStatus !== CallStatus.CONNECTING && "hidden"
               )}
             />
-
             <span className="relative">
-              {callStatus === "INACTIVE" || callStatus === "FINISHED"
+              {callStatus === CallStatus.INACTIVE ||
+              callStatus === CallStatus.FINISHED
                 ? "Call"
                 : ". . ."}
             </span>
           </button>
         ) : (
-          <button className="btn-disconnect" onClick={() => handleDisconnect()}>
+          <button className="btn-disconnect" onClick={handleDisconnect}>
             End
           </button>
         )}
@@ -267,10 +252,3 @@ const Agent = ({
 };
 
 export default Agent;
-
-
-
-
-
-
-
