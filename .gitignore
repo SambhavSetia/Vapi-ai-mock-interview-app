@@ -1,7 +1,6 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-prepwise-ff63e-firebase-adminsdk-fbsvc-6eb6b89453.json
-
+prepwise-ff63e-firebase-adminsdk-fbsvc-b10f232d31.json
 # dependencies
 /node_modules
 /.pnp
@@ -11,7 +10,7 @@ prepwise-ff63e-firebase-adminsdk-fbsvc-6eb6b89453.json
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
+prepwise-ff63e-firebase-adminsdk-fbsvc-b10f232d31.json
 # testing
 /coverage
 
